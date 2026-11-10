@@ -1,22 +1,18 @@
 name: Build
 
-# Builds ResizeGarage both ways the FH2 Mod Platform can load it, and zips each one laid out for the Azimuth folder:
-#   ResizeGarage-<version>-NativeAOT.zip   fh2-mods\ResizeGarage.dll                       (one native DLL, no .NET needed)
-#   ResizeGarage-<version>-Hosted.zip      fh2-mods-dotnet\ResizeGarage\ResizeGarage.dll   (needs Platform.NET + .NET 10)
+# Builds ResizeGarage as NativeAOT (one native DLL, no .NET runtime or Platform.NET needed) and zips it laid out for
+# the Azimuth folder:
+#   ResizeGarage-<version>.zip   fh2-mods\ResizeGarage.dll
 #
-#   - every push to main and every pull request: build both, upload the zips as artifacts
-#   - publishing a release: the same, and the zips are attached to the release. The tag has to be the version in
+#   - publishing a release: build it and attach the zip to the release. The tag has to be the version in
 #     ModInfo (ResizeGarage.vb), since that's what the in-game update check compares the latest release's tag with.
-#   - "Run workflow" on the Actions tab: the same as a push
+#   - "Run workflow" on the Actions tab: a test build, the zip uploaded as an artifact only
 #
 # ResizeGarage.vbproj imports the SDK's MSBuild files from ..\..\FH2-ModPlatform.NET, so that repo is checked out next
 # to this one (at the tag of the FH2ModPlatform package version the project uses), and the package itself comes from
 # that SDK release's assets.
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   release:
     types: [published]
   workflow_dispatch:
@@ -43,7 +39,7 @@ jobs:
       run:
         shell: bash
     permissions:
-      contents: write   # attaching the zips to a release
+      contents: write   # attaching the zip to a release
     steps:
       - uses: actions/checkout@v5
         with:
@@ -94,36 +90,20 @@ jobs:
       - name: Add the package folder as a NuGet source
         run: dotnet nuget add source "$(cygpath -w "$PWD/packages")" --name FH2ModPlatform
 
-      - name: Build (hosted)
-        run: dotnet build "$PROJECT" -c Release
-
       - name: Build (NativeAOT)
         run: dotnet publish "$PROJECT" -c Release -p:FH2ModHosting=Aot
 
-      - name: Stage the zips' contents
+      - name: Stage the zip's contents
         run: |
           set -e
-          out="$REPO_DIR/ResizeGarage/bin/Release/net10.0"
-          docs=()
-          for f in README.md LICENSE; do [[ -f "$REPO_DIR/$f" ]] && docs+=("$REPO_DIR/$f"); done
-
-          # Hosted: the whole output folder, minus the SDK (Platform.NET has its own) and the AOT build.
-          hosted=stage/hosted/fh2-mods-dotnet/ResizeGarage
-          mkdir -p "$hosted"
-          find "$out" -maxdepth 1 -type f ! -name 'FH2ModPlatform.*' -exec cp {} "$hosted/" \;
-          cp "${docs[@]}" stage/hosted/
-
-          # NativeAOT: the one DLL.
-          mkdir -p stage/aot/fh2-mods
-          cp "$out/win-x64/publish/ResizeGarage.dll" stage/aot/fh2-mods/
-          cp "${docs[@]}" stage/aot/
-
+          mkdir -p stage/fh2-mods
+          cp "$REPO_DIR/ResizeGarage/bin/Release/net10.0/win-x64/publish/ResizeGarage.dll" stage/fh2-mods/
+          for f in README.md LICENSE; do [[ -f "$REPO_DIR/$f" ]] && cp "$REPO_DIR/$f" stage/; done
           (cd stage && find . -type f | sort)
 
       - name: Zip
         run: |
-          (cd stage/aot && 7z a -tzip -mx=9 "../../ResizeGarage-${{ steps.version.outputs.name }}-NativeAOT.zip" . >/dev/null)
-          (cd stage/hosted && 7z a -tzip -mx=9 "../../ResizeGarage-${{ steps.version.outputs.name }}-Hosted.zip" . >/dev/null)
+          (cd stage && 7z a -tzip -mx=9 "../ResizeGarage-${{ steps.version.outputs.name }}.zip" . >/dev/null)
           ls -la *.zip
 
       - uses: actions/upload-artifact@v4
