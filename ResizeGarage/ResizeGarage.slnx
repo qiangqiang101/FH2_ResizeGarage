@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <BuildType Name="Debug" />
+    <BuildType Name="Release" />
+    <BuildType Name="Aot" />
+  </Configurations>
+  <Project Path="ResizeGarage.vbproj" />
+</Solution>

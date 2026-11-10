@@ -1,0 +1,139 @@
+name: Build
+
+# Builds ResizeGarage both ways the FH2 Mod Platform can load it, and zips each one laid out for the Azimuth folder:
+#   ResizeGarage-<version>-NativeAOT.zip   fh2-mods\ResizeGarage.dll                       (one native DLL, no .NET needed)
+#   ResizeGarage-<version>-Hosted.zip      fh2-mods-dotnet\ResizeGarage\ResizeGarage.dll   (needs Platform.NET + .NET 10)
+#
+#   - every push to main and every pull request: build both, upload the zips as artifacts
+#   - publishing a release: the same, and the zips are attached to the release. The tag has to be the version in
+#     ModInfo (ResizeGarage.vb), since that's what the in-game update check compares the latest release's tag with.
+#   - "Run workflow" on the Actions tab: the same as a push
+#
+# ResizeGarage.vbproj imports the SDK's MSBuild files from ..\..\FH2-ModPlatform.NET, so that repo is checked out next
+# to this one (at the tag of the FH2ModPlatform package version the project uses), and the package itself comes from
+# that SDK release's assets.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
+
+env:
+  SDK_REPO: qiangqiang101/FH2-ModPlatform.NET
+  REPO_DIR: FH2_ResizeGarage
+  PROJECT: FH2_ResizeGarage/ResizeGarage/ResizeGarage.vbproj
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
+jobs:
+  build:
+    # Windows: NativeAOT links with Visual Studio's C++ tools, which the windows runner has.
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: write   # attaching the zips to a release
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: ${{ env.REPO_DIR }}
+          persist-credentials: false
+
+      - name: Versions
+        id: version
+        run: |
+          # The mod's version (ModInfo, what the update check uses) and the FH2ModPlatform package it builds against.
+          mod=$(sed -n 's/.*New ModInfo("[^"]*", *"\([^"]*\)").*/\1/p' "$REPO_DIR/ResizeGarage/ResizeGarage.vb" | head -1)
+          sdk=$(sed -n 's/.*PackageReference Include="FH2ModPlatform" Version="\([^"]*\)".*/\1/p' "$PROJECT" | head -1)
+          echo "ResizeGarage $mod, FH2ModPlatform $sdk"
+          if [[ -z "$mod" || -z "$sdk" ]]; then echo "::error::Couldn't read the versions"; exit 1; fi
+          if [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+            if [[ "${GITHUB_REF_NAME#[vV]}" != "$mod" ]]; then
+              echo "::error::Release tag $GITHUB_REF_NAME doesn't match ModInfo's version $mod (ResizeGarage.vb); bump it first."
+              exit 1
+            fi
+            name="$mod"
+          else
+            name="$mod-${GITHUB_SHA::7}"
+          fi
+          echo "sdk=$sdk" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the SDK (FH2-ModPlatform.NET ${{ steps.version.outputs.sdk }})
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.SDK_REPO }}
+          ref: ${{ steps.version.outputs.sdk }}
+          path: FH2-ModPlatform.NET
+          persist-credentials: false
+
+      - name: Get the FH2ModPlatform package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p packages
+          gh release download "${{ steps.version.outputs.sdk }}" --repo "$SDK_REPO" \
+            --pattern "FH2ModPlatform.${{ steps.version.outputs.sdk }}.nupkg" --dir packages
+          ls packages
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: ${{ env.REPO_DIR }}/global.json
+
+      - name: Add the package folder as a NuGet source
+        run: dotnet nuget add source "$(cygpath -w "$PWD/packages")" --name FH2ModPlatform
+
+      - name: Build (hosted)
+        run: dotnet build "$PROJECT" -c Release
+
+      - name: Build (NativeAOT)
+        run: dotnet publish "$PROJECT" -c Release -p:FH2ModHosting=Aot
+
+      - name: Stage the zips' contents
+        run: |
+          set -e
+          out="$REPO_DIR/ResizeGarage/bin/Release/net10.0"
+          docs=()
+          for f in README.md LICENSE; do [[ -f "$REPO_DIR/$f" ]] && docs+=("$REPO_DIR/$f"); done
+
+          # Hosted: the whole output folder, minus the SDK (Platform.NET has its own) and the AOT build.
+          hosted=stage/hosted/fh2-mods-dotnet/ResizeGarage
+          mkdir -p "$hosted"
+          find "$out" -maxdepth 1 -type f ! -name 'FH2ModPlatform.*' -exec cp {} "$hosted/" \;
+          cp "${docs[@]}" stage/hosted/
+
+          # NativeAOT: the one DLL.
+          mkdir -p stage/aot/fh2-mods
+          cp "$out/win-x64/publish/ResizeGarage.dll" stage/aot/fh2-mods/
+          cp "${docs[@]}" stage/aot/
+
+          (cd stage && find . -type f | sort)
+
+      - name: Zip
+        run: |
+          (cd stage/aot && 7z a -tzip -mx=9 "../../ResizeGarage-${{ steps.version.outputs.name }}-NativeAOT.zip" . >/dev/null)
+          (cd stage/hosted && 7z a -tzip -mx=9 "../../ResizeGarage-${{ steps.version.outputs.name }}-Hosted.zip" . >/dev/null)
+          ls -la *.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ResizeGarage-${{ steps.version.outputs.name }}
+          path: ResizeGarage-*.zip
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" ResizeGarage-*.zip --repo "$GITHUB_REPOSITORY" --clobber

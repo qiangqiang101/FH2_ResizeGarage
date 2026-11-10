@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The FH2ModPlatform SDK, from its source next to this repo (GitHub\FH2-ModPlatform.NET):
+       always the latest, and its build setup (the fh2mod_init entry, Hosted or Aot, copying into the game). -->
+  <PropertyGroup>
+    <FH2SdkDir>$(MSBuildThisFileDirectory)..\..\FH2-ModPlatform.NET\src\FH2ModPlatform\</FH2SdkDir>
+  </PropertyGroup>
+  <Import Project="$(FH2SdkDir)build\FH2ModPlatform.props" />
+
+  <PropertyGroup>
+    <RootNamespace>ResizeGarage</RootNamespace>
+    <AssemblyName>ResizeGarage</AssemblyName>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- The Mod class, with its root namespace: Platform.NET (and NativeAOT) start this one. -->
+    <FH2ModType>ResizeGarage.ResizeGarage</FH2ModType>
+    <Version>1.0.0.0</Version>
+    <OptionStrict>On</OptionStrict>
+    <OptionInfer>On</OptionInfer>
+    <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- build: the SDK's props/targets come from the source above, not the package too (twice breaks NativeAOT). -->
+    <PackageReference Include="FH2ModPlatform" Version="0.11.0" ExcludeAssets="build;buildTransitive" />
+  </ItemGroup>
+
+  <Import Project="$(FH2SdkDir)build\FH2ModPlatform.targets" />
+
+</Project>
