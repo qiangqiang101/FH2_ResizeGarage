@@ -126,7 +126,7 @@ Public Class ResizeGarage
     Private Sub WriteLimit(n As Integer)
         Try
             File.WriteAllText(_iniPath,
-                "; Garage Size: how many cars your garage holds (the game's own is 550)." & vbCrLf &
+                "; ResizeGarage: how many cars your garage holds (the game's own is 550)." & vbCrLf &
                 "; Read when the game starts. Also on Pause > Settings > MODS." & vbCrLf &
                 "[ResizeGarage]" & vbCrLf &
                 $"MaxCars={n}" & vbCrLf)
